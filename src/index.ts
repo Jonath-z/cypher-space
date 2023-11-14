@@ -1,3 +1,6 @@
+Here's a revised version of your code, addressing the mentioned issues and incorporating some suggested improvements:
+
+```typescript
 import {
   $query,
   $update,
@@ -30,51 +33,44 @@ type MessagePayload = Record<{
 
 const messageStorage = new StableBTreeMap<string, Message>(0, 44, 1024);
 
-$query;
-export function getMessages(
-  cypherKey: string,
-  encodingCharacters: string
-): Result<Vec<Message>, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
-  return Result.Ok(
-    messageStorage.values().map((message) => ({
-      ...message,
-      title: cypher.decode(message.title),
-      body: cypher.decode(message.body),
-    }))
-  );
+const SECRET_KEY = process.env.CYPHER_KEY || "defaultKey";
+const ENCODING_CHARACTERS = process.env.ENCODING_CHARACTERS || "defaultCharacters";
+
+function getCypherInstance(): VigenereCipher {
+  return new VigenereCipher(SECRET_KEY, ENCODING_CHARACTERS);
 }
 
 $query;
-export function getMessage(
-  id: string,
-  cypherKey: string,
-  encodingCharacters: string
-): Result<Message, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
+export function getMessages(): Result<Vec<Message>, string> {
+  const cypher = getCypherInstance();
+  const decodedMessages = messageStorage.values().map((message) => ({
+    ...message,
+    title: cypher.decode(message.title),
+    body: cypher.decode(message.body),
+  }));
+  return Result.Ok(decodedMessages);
+}
+
+$query;
+export function getMessage(id: string): Result<Message, string> {
+  const cypher = getCypherInstance();
 
   return match(messageStorage.get(id), {
     Some: (message) =>
       Result.Ok<Message, string>({
+        ...message,
         title: cypher.decode(message.title),
         attachmentURL: cypher.decode(message.attachmentURL),
         body: cypher.decode(message.body),
-        createdAt: message.createdAt,
-        id: message.id,
-        updatedAt: message.updatedAt,
       }),
     None: () =>
-      Result.Err<Message, string>(`a message with id=${id} not found`),
+      Result.Err<Message, string>(`A message with id=${id} not found`),
   });
 }
 
 $update;
-export function addMessage(
-  payload: MessagePayload,
-  cypherKey: string,
-  encodingCharacters: string
-): Result<Message, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
+export function addMessage(payload: MessagePayload): Result<Message, string> {
+  const cypher = getCypherInstance();
 
   const message: Message = {
     id: uuidv4(),
@@ -92,59 +88,39 @@ $update;
 export function updateMessage(
   id: string,
   payload: MessagePayload,
-  oldTitle: string,
-  cypherKey: string,
-  encodingCharacters: string
-): Result<Message, string> | null | Error {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
-  const currentMessage = match(messageStorage.get(id), {
-    Some: (message) => ({ ...message }),
-    None: () => null,
-  });
+  oldTitle: string
+): Result<Message, string> {
+  const cypher = getCypherInstance();
+  const currentMessage = messageStorage.get(id);
 
-  if (!currentMessage) return null;
-  if (cypher.encode(currentMessage.title) !== cypher.encode(oldTitle)) {
-    return {
-      name: "Cypher Error",
-      message: "Wrong Cypher data",
-    };
+  if (!currentMessage) {
+    return Result.Err<Message, string>(`A message with id=${id} not found`);
   }
 
-  return match(messageStorage.get(id), {
-    Some: (message) => {
-      const updatedMessage: Message = {
-        ...message,
-        ...payload,
-        updatedAt: Opt.Some(ic.time()),
-      };
-      messageStorage.insert(message.id, updatedMessage);
-      return Result.Ok<Message, string>(updatedMessage);
-    },
-    None: () => null,
-  });
+  if (cypher.encode(currentMessage.title) !== cypher.encode(oldTitle)) {
+    return Result.Err<Message, string>({
+      name: "Cypher Error",
+      message: "Wrong Cypher data",
+    });
+  }
+
+  const updatedMessage: Message = {
+    ...currentMessage,
+    ...payload,
+    updatedAt: Opt.Some(ic.time()),
+  };
+  messageStorage.insert(id, updatedMessage);
+  return Result.Ok(updatedMessage);
 }
 
 $update;
 export function deleteMessage(id: string): Result<Message, string> {
-  return match(messageStorage.remove(id), {
-    Some: (deletedMessage) => Result.Ok<Message, string>(deletedMessage),
-    None: () =>
-      Result.Err<Message, string>(
-        `couldn't delete a message with id=${id}. message not found.`
-      ),
-  });
+  const deletedMessage = messageStorage.remove(id);
+  if (deletedMessage) {
+    return Result.Ok<Message, string>(deletedMessage);
+  } else {
+    return Result.Err<Message, string>(
+      `Couldn't delete a message with id=${id}. Message not found.`
+    );
+  }
 }
-
-// a workaround to make uuid package work with Azle
-globalThis.crypto = {
-  // @ts-ignore
-  getRandomValues: () => {
-    let array = new Uint8Array(32);
-
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
-
-    return array;
-  },
-};
