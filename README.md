@@ -4,8 +4,6 @@ Cypher Space is a highly secure messaging exchange application that implements t
 
 ## Features
 
-End-to-End Encryption: All messages are encrypted using the Vigenere Cipher algorithm, ensuring secure communication between users.
-
 - **End-to-End Encryption**: All messages are encrypted using the Vigenere Cipher algorithm, ensuring secure communication between users.
 
 ## Security Considerations
