@@ -1,12 +1,13 @@
 {
   "canisters": {
-    "message_board": {
+    "cypher_space": {
       "type": "custom",
       "main": "src/index.ts",
       "candid": "src/index.did",
-      "build": "npx azle message_board",
+      "build": "npx azle cypher_space",
       "ts": "src/index.ts",
-      "wasm": ".azle/message_board/message_board.wasm",
+      "root": "src",
+      "wasm": ".azle/cypher_space/cypher_space.wasm",
       "gzip": true
     }
   }
