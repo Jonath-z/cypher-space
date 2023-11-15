@@ -13,6 +13,11 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import VigenereCipher from "./cypher";
 
+enum ErrorName {
+  NotFound = "NotFound",
+  InvalidPayload = "InvalidPayload",
+}
+
 type Message = Record<{
   id: string;
   title: string;
@@ -30,19 +35,27 @@ type MessagePayload = Record<{
 
 const messageStorage = new StableBTreeMap<string, Message>(0, 44, 1024);
 
+// Utility functions for Vigenere cipher
+function encryptText(text: string, cipher: VigenereCipher): string {
+  return cipher.encode(text);
+}
+
+function decryptText(text: string, cipher: VigenereCipher): string {
+  return cipher.decode(text);
+}
+
 $query;
 export function getMessages(
   cypherKey: string,
   encodingCharacters: string
 ): Result<Vec<Message>, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
-  return Result.Ok(
-    messageStorage.values().map((message) => ({
-      ...message,
-      title: cypher.decode(message.title),
-      body: cypher.decode(message.body),
-    }))
-  );
+  const cipher = new VigenereCipher(cypherKey, encodingCharacters);
+  const decodedMessages = messageStorage.values().map((message) => ({
+    ...message,
+    title: decryptText(message.title, cipher),
+    body: decryptText(message.body, cipher),
+  }));
+  return Result.Ok(decodedMessages);
 }
 
 $query;
@@ -51,20 +64,18 @@ export function getMessage(
   cypherKey: string,
   encodingCharacters: string
 ): Result<Message, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
+  const cipher = new VigenereCipher(cypherKey, encodingCharacters);
 
   return match(messageStorage.get(id), {
-    Some: (message) =>
-      Result.Ok<Message, string>({
-        title: cypher.decode(message.title),
-        attachmentURL: cypher.decode(message.attachmentURL),
-        body: cypher.decode(message.body),
-        createdAt: message.createdAt,
-        id: message.id,
-        updatedAt: message.updatedAt,
-      }),
-    None: () =>
-      Result.Err<Message, string>(`a message with id=${id} not found`),
+    Some: (message) => {
+      return Result.Ok<Message, string>({
+        ...message,
+        title: decryptText(message.title, cipher),
+        attachmentURL: decryptText(message.attachmentURL, cipher),
+        body: decryptText(message.body, cipher),
+      });
+    },
+    None: () => Result.Err<Message, string>(ErrorName.NotFound),
   });
 }
 
@@ -74,15 +85,15 @@ export function addMessage(
   cypherKey: string,
   encodingCharacters: string
 ): Result<Message, string> {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
+  const cipher = new VigenereCipher(cypherKey, encodingCharacters);
 
   const message: Message = {
     id: uuidv4(),
     createdAt: ic.time(),
     updatedAt: Opt.None,
-    title: cypher.encode(payload.title),
-    body: cypher.encode(payload.body),
-    attachmentURL: cypher.encode(payload.attachmentURL),
+    title: encryptText(payload.title, cipher),
+    body: encryptText(payload.body, cipher),
+    attachmentURL: encryptText(payload.attachmentURL, cipher),
   };
   messageStorage.insert(message.id, message);
   return Result.Ok(message);
@@ -96,16 +107,16 @@ export function updateMessage(
   cypherKey: string,
   encodingCharacters: string
 ): Result<Message, string> | null | Error {
-  const cypher = new VigenereCipher(cypherKey, encodingCharacters);
+  const cipher = new VigenereCipher(cypherKey, encodingCharacters);
   const currentMessage = match(messageStorage.get(id), {
     Some: (message) => ({ ...message }),
     None: () => null,
   });
 
   if (!currentMessage) return null;
-  if (cypher.encode(currentMessage.title) !== cypher.encode(oldTitle)) {
+  if (encryptText(currentMessage.title, cipher) !== encryptText(oldTitle, cipher)) {
     return {
-      name: "Cypher Error",
+      name: ErrorName.InvalidPayload,
       message: "Wrong Cypher data",
     };
   }
@@ -128,14 +139,13 @@ $update;
 export function deleteMessage(id: string): Result<Message, string> {
   return match(messageStorage.remove(id), {
     Some: (deletedMessage) => Result.Ok<Message, string>(deletedMessage),
-    None: () =>
-      Result.Err<Message, string>(
-        `couldn't delete a message with id=${id}. message not found.`
-      ),
+    None: () => Result.Err<Message, string>(
+      `Couldn't delete a message with id=${id}. Message not found.`
+    ),
   });
 }
 
-// a workaround to make uuid package work with Azle
+// Workaround for making uuid package work with Azle
 globalThis.crypto = {
   // @ts-ignore
   getRandomValues: () => {
